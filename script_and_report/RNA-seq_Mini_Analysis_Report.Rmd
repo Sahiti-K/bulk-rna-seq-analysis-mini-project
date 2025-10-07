@@ -1,0 +1,316 @@
+---
+title: "RNA-seq Mini Analysis Report"
+author: "Sahiti K"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{=html}
+<style>
+body {
+  font-family: Arial, sans-serif;
+  text-align: justify;   
+  font-size: 16px;       
+  line-height: 1.6;      
+}
+</style>
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 0. Dataset Creation
+
+We begin by simulating a small RNA-seq–like dataset with six genes (G1–G6) and five samples (S1–S5). Three samples represent the Healthy condition and two represent TB.
+
+```{r}
+counts <- matrix(
+  c(
+    50,  55,  52, 120, 130,
+    300, 280, 310, 200, 190,
+    15,  14,  16,  17,  15,
+    400, 420, 410, 800, 820,
+    150, 160, 155, 120, 110,
+    8,   7,   9,   8,   7
+  ),
+  nrow = 6, byrow = TRUE
+)
+rownames(counts) <- paste0("G", 1:6)
+colnames(counts) <- paste0("S", 1:5)
+
+samples <- data.frame(
+  SampleID = paste0("S", 1:5),
+  Condition = c("Healthy", "Healthy", "Healthy", "TB", "TB"),
+  stringsAsFactors = FALSE
+)
+```
+
+## 1. Inspecting the Dataset
+
+```{r}
+dim(counts)
+rownames(counts)
+colnames(counts)
+str(samples)
+samples
+```
+
+We have a small, balanced dataset (6 genes × 5 samples). This structure helps demonstrate basic RNA-seq analysis, computing gene variability, fold change, and per-condition means.
+
+## 2. Per-Gene Mean and Variability
+
+```{r}
+gene_mean <- apply(counts, 1, mean)
+gene_sd   <- apply(counts, 1, sd)
+
+gene_stats <- data.frame(
+  Mean = round(gene_mean, 2),
+  SD   = round(gene_sd, 2)
+)
+gene_stats
+
+top2_var <- head(gene_stats[order(-gene_stats$SD), ], 2)
+top2_var
+```
+
+Genes G4 and G2 show the highest standard deviations, meaning they vary the most across samples — potential indicators of biological regulation differences.
+
+## 3. Per-Sample Totals (Library Size)
+
+```{r}
+sample_totals <- colSums(counts)
+sample_totals
+names(which.max(sample_totals))
+```
+
+Sample S5 (TB condition) has the largest total read count, consistent with higher transcriptional activity in disease states.
+
+## 4. Mean Expression per Gene per Condition
+
+```{r}
+gene_cond_means <- tapply(
+  counts,
+  list(
+    rep(rownames(counts), ncol(counts)),
+    rep(samples$Condition, each = nrow(counts))
+  ),
+  mean
+)
+gene_cond_means
+```
+
+This allows comparison of average gene expression between Healthy and TB groups.
+
+## 5. Genes Upregulated in TB
+
+```{r}
+up_in_TB <- rownames(counts)[gene_cond_means[, "TB"] > gene_cond_means[, "Healthy"]]
+
+up_in_TB
+```
+
+Up-regulated genes show higher mean expression in TB — potentially reflecting immune activation or infection response.
+
+## 6. Fold Change Proxy (TB / Healthy)
+
+```{r}
+# Safe division to avoid division by zero
+safe_div <- function(tb, healthy) {
+  if (healthy == 0) return(if (tb > 0) Inf else NA)
+  tb / healthy
+}
+
+# Compute fold-change proxy for each gene
+safe_fc <- mapply(
+  safe_div,
+  tb = gene_cond_means[, "TB"],
+  healthy = gene_cond_means[, "Healthy"]
+)
+
+# Preserve gene names
+names(safe_fc) <- rownames(gene_cond_means)
+
+# Round for readability
+safe_fc <- round(safe_fc, 3)
+
+# Subset to only upregulated genes
+fc_up <- safe_fc[up_in_TB]
+
+# Identify gene with largest fold-change
+if (length(fc_up)) {
+  top_fc_gene  <- names(which.max(fc_up))
+  top_fc_value <- max(fc_up)
+} else {
+  top_fc_gene  <- NA
+  top_fc_value <- NA
+}
+
+safe_fc
+fc_up
+top_fc_gene
+top_fc_value
+```
+
+The fold-change metric approximates relative upregulation. Here, **G1** typically shows the strongest increase in TB samples.
+
+## 7. Label Samples by Load (High vs Normal)
+
+```{r}
+median_total <- median(sample_totals)
+LoadLabel <- ifelse(sample_totals > median_total, "HighLoad", "Normal")
+
+samples$Total     <- sample_totals[samples$SampleID]
+samples$LoadLabel <- LoadLabel[samples$SampleID]
+samples
+
+```
+
+This classification separates samples with above-median library sizes — *HighLoad* samples are mainly TB, suggesting globally elevated gene activity.
+
+## 8. Condition vs Load Crosstab
+
+```{r}
+table(samples$Condition, samples$LoadLabel)
+```
+
+TB samples correspond entirely to the HighLoad group, reinforcing biological consistency in transcriptional activation.
+
+## 9. Row-Standardized Counts
+
+```{r}
+row_centered <- counts - gene_mean
+row_centered
+```
+
+Subtracting row means centers expression around zero, allowing detection of relative up/down shifts across samples without absolute magnitude bias.
+
+## 10. Combine into a List
+
+```{r}
+rna_seq <- list(
+  counts = counts,
+  samples = samples,
+  gene_cond_means = gene_cond_means
+)
+
+rna_seq$gene_cond_means["G3", "TB"]
+```
+
+Storing data in a list mimics structured RNA-seq data objects used in packages like DESeq2.
+
+## 11. Gene with Highest Single Value
+
+```{r}
+max_val <- max(counts)
+pos <- which(counts == max_val, arr.ind = TRUE)
+rownames(counts)[pos[1, "row"]]
+colnames(counts)[pos[1, "col"]]
+max_val
+```
+
+G4 in sample S4 (TB) shows the maximum expression value — again consistent with TB-driven over expression.
+
+## 12. Per-Condition Total Counts
+
+```{r}
+cond_totals <- tapply(colSums(counts), samples$Condition, sum)
+cond_totals
+names(which.max(cond_totals))
+```
+
+Total counts were higher in Healthy samples than in TB, reflecting library size differences.
+
+## 13. Low-Count Filtering
+
+```{r}
+counts_filtered <- counts
+changed <- sum(counts_filtered < 5)
+counts_filtered[counts_filtered < 5] <- 0
+changed
+counts_filtered
+```
+
+Filtering removes low-expression noise — standard RNA-seq preprocessing to stabilize variance.
+
+## 14. Recompute Means After Filtering
+
+```{r}
+gene_mean_after <- apply(counts_filtered, 1, mean)
+round(gene_mean_after, 3)
+
+names(which.max(gene_mean))
+names(which.max(gene_mean_after))
+```
+
+High-expression genes remain stable post-filtering, while low-expression genes (e.g., G6) drop further.
+
+## 15. Reorder Columns by Condition
+
+```{r}
+order_by_cond <- order(factor(samples$Condition, levels = c("Healthy", "TB")))
+ordered_samples <- samples$SampleID[order_by_cond]
+counts_reordered <- counts[, ordered_samples, drop = FALSE]
+colnames(counts_reordered)
+```
+
+Reordering by condition simplifies visualization and statistical testing.
+
+## 16. Gene Dynamic Range
+
+```{r}
+gene_range <- apply(counts, 1, function(x) max(x) - min(x))
+gene_range
+names(which.max(gene_range))
+```
+
+G4 shows the widest range, most dynamically expressed gene across conditions.
+
+## 17. Barplot of Sample Totals
+
+```{r}
+barplot(sample_totals,
+        main = "Library Sizes per Sample",
+        ylab = "Total Counts",
+        col = c(rep("steelblue", 3), rep("tomato", 2)))
+```
+
+Healthy samples (blue) cluster at lower counts, while TB (red) shows elevated totals, matching expectations.
+
+## 18. Rename G2 → G2A
+
+```{r}
+rownames(counts)[rownames(counts) == "G2"] <- "G2A"
+rownames(counts)
+```
+
+## 19. Remove Lowest-Mean Gene
+
+```{r}
+lowest_mean_gene <- names(which.min(gene_mean))
+counts_pruned <- counts[setdiff(rownames(counts), lowest_mean_gene), , drop = FALSE]
+lowest_mean_gene
+counts_pruned
+```
+
+Low-expression genes are often uninformative and can introduce statistical noise.
+
+## 20. Summary and Interpretation
+
+```{r}
+gene_summary <- data.frame(
+  Gene = rownames(counts),
+  Mean = round(gene_mean, 2),
+  SD = round(gene_sd, 2),
+  HealthyMean = round(gene_cond_means[, "Healthy"], 2),
+  TBMean = round(gene_cond_means[, "TB"], 2),
+  FoldChange = round(safe_fc, 3),
+  Range = gene_range,
+  UpregulatedInTB = rownames(counts) %in% up_in_TB,
+  row.names = NULL   # <- prevents genes from appearing twice
+)
+gene_summary
+```
+
+The dataset included 6 genes across 5 samples in two conditions (Healthy vs TB). Genes G4 and G2 showed the highest variability, while sample S4 had the largest library size. TB samples overall had higher counts, with several genes upregulated, including top_fc_gene (FC = top_fc_value). After filtering low counts and removing the lowest‑mean gene (lowest_mean_gene), a unified summary table was generated consolidating key statistics such as mean, standard deviation, condition means, fold‑change, and range.
