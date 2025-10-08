@@ -1,4 +1,4 @@
-# Bulk RNA‑seq Analysis Mini Project 
+# Bulk RNA‑seq Expression Analysis Mini Project 
 This repository presents a mini‑project in bulk RNA‑seq analysis, structured as a reproducible workflow. It illustrates the core steps of exploratory RNA‑seq data analysis using a small demonstration dataset, while providing a framework that can be readily scaled to real‑world datasets.
 
 ## What is Bulk RNA‑seq? 🧬
